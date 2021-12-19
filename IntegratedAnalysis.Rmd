@@ -1,8 +1,211 @@
+---
+title: "Documented Halomonas Expressed Protein Index, Quantified Protein Profile and Spectral Library Producing Makefile"
+author: "Matthew Russell"
+date: "August, 2021"
+output:
+  pdf_document:
+    highlight: tango
+    toc: yes
+    toc_depth: 4
+  word_document:
+    toc: yes
+    reference_docx: template.docx
+  html_document:
+    highlight: tango
+    theme: flatly
+    toc: yes
+    toc_float: yes
+bibliography: library.bib
+csl: nature.csl
+abstract: \noindent Documentation of a makefile to reproduce protein index, protein quantification and spectral libraries for *Halomonas Bluephagenesis* TD01. A complete commentary on the accompanying makefile script to enable reproduction of libraries from raw mass spectrometry data files.
+---
+
+# Introduction
+
+This document describes a data processing pipeline which generates data reported in paper "Baseline Proteomics Characterisation of Biomanufacturing Organism Halomonas Bluephagenesis". The pipeline is scripted in gnu-make and describes every process between raw data and the package submitted to PRIDE repository (https://doi.org/10.6019/PXD028156). 
+
+## Introduction to Pipeline
+
+Data was acquired as MS^e^ in which the instrument alternates between a low energy scan and a collision energy "ramp".
+The low energy scan captures precursor ions, the ramp captures product ion spectra.
+Data of this kind is not supported by opensource tools such as `openms` or `trans-proteomics pipeline` for spectra generation.
+So the Waters proprietary tools are used.
+
+The proprietary tools that manage the pipeline as follows.
+
+-  Mass spectrometry data files are converted to feature lists by `apex3d.exe`.
+-  Precursor and product ions are matched by elution profile and combined into conventional spectra peak lists by `peptide3d64.exe`.
+-  Spectra are searched against a fasta database by `iadb.exe`.
+
+It is possible to output additional information at each stage of the process.
+For example `apex3d.exe` is able to output a `.csv` file of all identified features and `peptide3d64.exe` can output a conventional `.mgf` file which may be submitted to other search engines.
+The final output of `iadb.exe` is a set of three `.csv` files summarising the outcome at a protein, peptide and fragment level.
+
+After peakpicking data is searched and processed along two separate tracks.
+Protein expression is quantified using the "top three" method incorperated into Waters "iadb" search.
+Spectra obtained from the `peptide3d64.exe` are separately extracted as `.mgf` files and processed through the `X!Tandem` search engine and trans-proteomics-pathway to produce spectral libraries.
+
+## Introduction to Make
+
+The analysis pipeline is executed using `gun-make` also called `make`.
+The program `make` is well [documented](https://www.gnu.org/software/make/manual/make.html)(https://www.gnu.org/software/make/manual).
+`Make` is principally used to compile software but is also useful to document bioinformatics pipelines.
+`Make` is a useful tool for scripting the "many-to-many" operations in which multiple mass spectrometry data files are each processed into a series of intermediate files followed by "many-to-one" operations where multiple intermediate files are combined into a summary output.
+`Make` facilitates writing commands for each operation in a single place for application to multiple files which ensures consistency and facilitates modification and experimentation with the pipeline as a whole.
+
+
+The principle of `make` is that the program is supplied with a set of "[rules](https://www.gnu.org/software/make/manual/html_node/Rule-Introduction.html#Rule-Introduction)" for converting "prerequisites" into "targets" by means of a "recipe".
+In this case the targets are a set of spectral libraries and the source files are MS datasets, `fasta` protein sequence libraries etc.
+Recipes take the general form:
+
+```{bash, engine='bash', echo=TRUE, eval=FALSE}
+target : prerequisite
+  program -in prerequisite -out target
+```
+
+Recipes can be written in any order and `make` is able to chain them together to convert source files to target files via intermediate files.
+The following `make` file has been written with recipes in the sequence in which they would be run through the pipeline.
+When executed; make will parallelise the processing to speed up job completion.
+
+`Make` is able to [substitute](https://www.gnu.org/software/make/manual/html_node/Reference.html#Reference) text for macros which are defined `myMacro:=text` or `myMacroList:=element_01 element_02` and then called `${myMacro}` or `${myMacroList}`.
+It also has a set of built in functions that are called in the general form: `$(function_name variable,param,param...)` which are able to manipulate variables, for example to change a file suffix, or change or remove a directory path.
+In this way it is possible to write rules convert raw data to intermediate files through an analysis pipeline without explicitly Term 1writing out all intermediate file names.
+Each recipe used for this project are briefly described and links to documentation supplied as encountered in the `make` file.
+
+# System Setup
+
+This section describes the programs that must be installed in order to run this pipeline.
+
+## PC Setup
+
+This pipeline was developed on a PC with spesification:
+
+Processor
+
+:   Intel i7-7820X 3.6GHz 8 cores.
+
+RAM
+
+:   128 GB
+
+Operating System
+
+:   Windows 10 2004 Build 19041.1165
+
+Windows is required for Waters' proprietary tools.
+The `peptide3d` program and process consumes a lot of RAM, script detailed below prevents more than one instance of `peptide3d` running simultaneously to prevent the system running out of RAM.
+It is possible the pipeline will fail if run on a system with substantially less RAM than was used in development. 
+
+## Install All Required Programs
+
+(@) If Waters executables (`apex3d`, `peptide3d`, `merge` and `iadb`) outlined above are not otherwise available download [Progenisis QI for Proteomics](http://www.nonlinear.com/progenesis/qi-for-proteomics/download/) and install, as this software installs the required executables. Here the executables from Waters' PLGS 
+(@) Download [Rtools](https://cran.r-project.org/bin/windows/Rtools/) and install, this includes gnu tools `sed`, `awk`, `grep`, etc.
+(@) If not present on your system download `gnu-make v4.3`. Compiled binaries can be found here: `https://github.com/mbuilov/gnumake-windows`. Earlier versions of gnu-make will not be compatible as the script uses features introduced in v4.3 such as [grouped targets](https://www.gnu.org/software/make/manual/html_node/Multiple-Targets.html).
+(@) If not present on your system download and install
+[Trans-Proteomic Pipeline (TPP)](http://tools.proteomecenter.org/software.php) this work was tested with v6.0.0.
+(@) If not present on your system download and install
+[x!tandem](https://www.thegpm.org/tandem/) this work was tested with version ALANINE (2017.02.01).
+As an alternative the version of x!tandem distributed with the Trans-Proteomic Pipeline (TPP) may be used, however at present this is the older Jackhammer TPP (2013.06.15.1 - LabKey, Insilicos, ISB) version which was not used here.
+(@) If not present on your system download and install
+[seqkit](https://bioinf.shenwei.me/seqkit/download/) this work was tested with v0.12.0.
+(@) If not present on the system download and install
+[openMS](https://github.com/OpenMS/OpenMS/releases) this work was tested with v2.4.0.
+(@) A python distribution is required to run the [msproteomicstools](https://github.com/msproteomicstools/msproteomicstools) package. 
+This work was tested with [miniconda](https://conda.io/miniconda.html) for python 3.7 with [msproteomicstools](https://github.com/msproteomicstools/msproteomicstools) installed as per the instructions given on the website.
+The minimal python installation enables just the requirements for this process to be installed with the versions required to replicate this work.
+Miniconda may be installed alongside other instances of python allowing this work to be repeated without disrupting a pre-existing system.
+During installation note the target directory and adjust if required.
+For single user installation this will look like: `C:\Users\<user>\AppData\Local\Continuum\miniconda3`, for all users it may be `C:\ProgramData\Miniconda3`. Note `C:\ProgramData\` is a hidden directory on windows 10, navigate to it directly by entering path into windows explorer or set windows explorer to show hidden files.
+(@) Install required python packages. To access the python command line, open a windows command window; navigate to the `Miniconda3\Scripts` directory; and type `activate` into the command line. Required packages will need to be installed from `pipy.org` through the python command line.
+The following commands entered into the anaconda prompt should install the required packages in the versions used here. Alternatively the latest versions of these programs might be installed although that might require adjustments to processing commands below.
+
+```{bash, engine='bash', echo=TRUE, eval=FALSE}
+pip install numpy==1.15.3
+pip install pymzml==0.7.5
+pip install Biopython==1.72
+pip install Cython==0.29.2 --install-option="--no-cython-compile"
+pip install msproteomicstools==0.8.0
+```
+
+No further interaction with the python environment should be required.
+
+## Executing Make
+
+Gnu-make is executed from the command line.
+It it easiest to start a new `cmd` window in the project directory, set the `PATH` variable to just the location of gnu-make and then execute gnu-make on the script:
+
+```{bash, engine='bash', echo=TRUE, eval=FALSE}
+PATH="C:\Program Files\gmake"
+
+gnumake-4.3-x64.exe -rR -j 8 -l 8 -f ./IntegratedAnalysis.mk  --output-sync all
+```
+
+The command line is documented on the gmake [manual](https://www.gnu.org/software/make/manual/html_node/Options-Summary.html).
+Briefly:
+`-rR` turns off internal rules for compiling software;
+`-j` indicates the number of concurrent jobs permitted, select a lower number if limited processors or RAM available;
+`-l` checks load is below value specified before starting a new job, this provides some protection against overloading RAM which causes Waters programs to crash;
+`-f` indicates the file name of the makescript to run;
+`--output-sync` puts the output of each job on the console after the job finishes, if not set the output of concurrently running tasks will be ooutput concurrently and consequently unintelligible;
+`all` is the name of the "target" required by this build, alternatives are available for testing, see below.
+
+
+# Documented Makefile for Pipeline
+
+The following code blocks are combined into a single `gnu-make` script to run the pipeline.
+
+
+## Set Shell
+
+Each recipe in the make file is run in a "shell", that is a separate command line environment.
+On windows there is a choice of [shell](https://www.gnu.org/software/make/manual/html_node/Choosing-the-Shell.html).
+This script used windows native executables from Waters to process the data and so the windows `cmd.exe` shell was chosen.
+It is likely that the script could be rewritten to run in the Windows Subsystem for Linux if required.
+However in this case all the `dos` commands such as `copy` and `ren` could need to be replaced with unix alternatives and paths changed to unix format.
+
+
+```{bash mk_shell, engine='bash', echo=TRUE, eval=FALSE}
 SHELL=C:/Windows/System32/cmd.exe
+```
+```{r mk_shell, engine='cat', engine.opts=list(file='./integrated.mk',append=FALSE)}
+```
+
+Programs in the trans-proteomics-pipeline call other programs and particularly perl scripts.
+In order for these programs to be available they must be on the `PATH` for the shell when it is called by make.
+The `PATH` is set explicitly with the [`export`](https://www.gnu.org/software/make/manual/html_node/Variables_002fRecursion.html) to include the required trans-proteomics-pipeline directories.
+ 
+The local for the shell is also explicitly set set to the default "C" local.
+Without setting this here `perl` may return a "locale" error which is harmless in itself but will stop the make script.
+Explicitly setting the locale to the default "C" locale by exporting `LC_ALL=C` to the shell prevents this error.
+
+```{r, engine='cat',echo=FALSE, eval=FALSE, engine.opts=list(file='./integrated.mk',append=TRUE)}
+# Make runs each recipe in a separate shell. It is critical that TPP programs are able to search
+# the path of this shell for executables. The following "export" statement ensure these are available.
+# The subsequent export command sets the local in the shell to "C" which is suitable for processing and prevents spurious error messages
+# that may be returned by perl.
+```
+```{bash mk_export, engine='bash', echo=TRUE, eval=FALSE}
 
 export PATH=C:\TPP\perl\bin;C:\TPP\bin
 export LC_ALL=C
 
+```
+```{r mk_export, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+## Paths to Executables
+```{r, engine='cat',echo=FALSE, eval=FALSE, engine.opts=list(file='./integrated.mk',append=TRUE)}
+# SECTION: Paths to Executables
+```
+
+Explicit control of software versions is assured by assigning the full path of each executable to a macro for each of the programs required for the pipeline.
+These must be edited to be correct for the system on which the make script is to be run.
+Setting them explicity should also support reproducability since the version of software used here may be installed along side subsequent releases of the software buing used in future active research.
+Checking these are correct also acts as a check list to ensure system is set up correctly.
+
+
+```{bash mk_exePaths, engine='bash', echo=TRUE, eval=FALSE}
 
 # Paths to the Waters executables 
 apex_path="C:\PLGS3.0.3\lib\apex3d\Apex3D64.exe"
@@ -43,10 +246,34 @@ Peptide3D2MGF_path="C:\PROGRA~1\Waters\Symphony\utils\PEPTID~1.EXE"
 
 ### Powershell
 Powershell_path="C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+```
+```{r mk_exePaths, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+## Macros
+```{r, engine='cat',echo=FALSE, eval=FALSE, engine.opts=list(file='./integrated.mk',append=TRUE)}
+# SECTION: Macros
+```
+In `make` macros are rules to generate a required instructions prior to execution.
+They may be used to generate output file names from an input file name, or vice versa.
+They may be used to generate entire recipe comands.
+
+
+The following macro tests to see if required target directories exist and creates it if not.
+It is used at the start of most recipes to ensure the target directory is available.
+
+```{bash mk_makeDir, engine='bash', echo=TRUE, eval=FALSE}
 
 define makeDir
 if not exist $(subst /,\,$(abspath $(dir ${1}))) mkdir $(subst /,\,$(abspath $(dir ${1})))
 endef
+```
+```{r mk_makeDir, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+The following two macros turn relative file paths into absolute file paths, this allows relative paths to facilitate portability of the script but absolute paths to be provided to programs which require them.
+They also convert between unix-like forward slash "/" and windows like back slash "\\" for those that need them.
+
+```{bash mk_winify, engine='bash', echo=TRUE, eval=FALSE}
 
 define winify
 $(subst /,\,$(abspath  ${1}))
@@ -56,14 +283,49 @@ define unixify
 $(subst \,/,$(abspath  ${1}))
 endef
 
+```
+```{r mk_winify, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+The following pair of macros between them find the position of a string within a gmake word list.
+The slightly esoteric formulation is a recursive macro _pos, which nibbles through a word list until it removes the matching element combined with pos which counts the remaining elements.
+The code enables the `pep3d` process to be run one file at a time as run concurrently multiple `pep3d` processes will consume all the RAM causing the processes to crash.
+
+```{bash mk_pos, engine='bash', echo=TRUE, eval=FALSE}
 
 _pos = $(if $(findstring $1,$2),$(call _pos,$1,\
        $(wordlist 2,$(words $2),$2),x $3),$3)
 pos = $(words $(call _pos,$1,$2))
 
+```
+```{r mk_pos, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+The following macro calls powershell to obtain a UUID.
+This is used to pass a UUID to the IADB search.
+
+
+```{bash mk_UUID, engine='bash', echo=TRUE, eval=FALSE}
 
 UUID=$(shell ${Powershell_path} -Command "[guid]::NewGuid().ToString()")
 
+```
+```{r mk_UUID, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+## Mass Spectrometry Raw Data Files
+
+The raw data acquired on the Xevo has been stored on a local hard drive.
+
+Waters data are stored as multiple files inside a folder.
+`Make` can't treat a directory as a pre-requisite so each file is specified as the `_HEADER.TXT` file held in each of the directories and this element is removed when passed to the `apex3d` program.
+
+The raw data file paths are concatenated into a single list of files so they can all be separately processed by a single command.
+This ensures consistency in data processing.
+Raw data directory paths will need to be adjusted to the location of downloaded data for re-use.
+
+```{bash mk_rawPaths_wcl, engine='bash', echo=TRUE, eval=FALSE}
 
 rawDirComps:=_CHRO001.DAT _CHRO002.DAT _CHRO003.DAT _CHRO004.DAT _CHRO005.DAT \
 							_CHROMS.INF _extern.inf _FUNC001.DAT _FUNC001.IDX _FUNC001.STS \
@@ -114,6 +376,12 @@ rawFilesHaloWCLPaths:=$(addsuffix /_HEADER.TXT, $(addprefix ${rawDirHalomonas_wc
 rawFiles_All_wcl:=${rawFilesEcoliWCLPaths} ${rawFilesHaloWCLPaths}
 
 
+```
+```{r mk_rawPaths_wcl, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+```{bash mk_rawPaths_peri, engine='bash', echo=TRUE, eval=FALSE}
 
 ############
 # Edit for secretome
@@ -143,6 +411,12 @@ rawFiles_All_peri:=${rawFilesEcoliPeriPaths} ${rawFilesHaloPeriPaths}
 
 
 
+```
+```{r mk_rawPaths_peri, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+```{bash mk_rawPaths_sec, engine='bash', echo=TRUE, eval=FALSE}
 
 ############
 # Edit for secretome
@@ -166,6 +440,13 @@ rawFilesHaloSecPaths:=$(addsuffix /_HEADER.TXT, $(addprefix ${rawCellFracDir}, $
 rawFiles_All_sec:=${rawFilesEcoliSecPaths} ${rawFilesHaloSecPaths}
 
 
+```
+```{r mk_rawPaths_sec, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+With all the raw data specified they are grouped for convenience into lists of all files, and of each bacteria species separatly.
+
+```{bash mk_rawPaths_int, engine='bash', echo=TRUE, eval=FALSE}
 
 rawFiles_All:=${rawFilesEcoliSecPaths} ${rawFilesHaloSecPaths} ${rawFilesEcoliPeriPaths} ${rawFilesHaloPeriPaths} ${rawFilesEcoliWCLPaths} ${rawFilesHaloWCLPaths}
 
@@ -175,6 +456,21 @@ rawFiles_Ecoli:=${rawFilesEcoliSecPaths} ${rawFilesEcoliPeriPaths} ${rawFilesEco
 rawFiles_Halo:=${rawFilesHaloSecPaths} ${rawFilesHaloPeriPaths} ${rawFilesHaloWCLPaths}
 
 rawDir:=${rawFilesEcoli_wcl} ${rawFilesHalo_wcl} ${rawEcoli_Periplasm_Fracs_1} ${rawHalo_Periplasm_Fracs_1} ${rawEcoli_Periplasm_Fracs_2} ${rawEcoliSec} ${rawHaloSec}
+```
+```{r mk_rawPaths_int, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+
+## Intermediate Files
+
+Lists of intermediate files are useful for setting put the rules for converting intermediate files.
+Here the names of the required intermediate files are determined from the raw data file names.
+`Apex3d` output files are put into sub dir `apex`, `peptide3d` to sub dir `pep3d` and `iadb` files to subdir `iadb`.
+The useful outputs of `iadb`, the tables of protein, peptide and fragment level summary data, are output to sub dir `iadb\tables` although that is handled in the recipes.
+
+
+```{bash mk_intPathDir, engine='bash', echo=TRUE, eval=FALSE}
 
 apexDir:=./apex/
 pep3dDir:=./pep3d/
@@ -183,6 +479,13 @@ iadbDir:=./iadb/
 iadbTabDir:=./iadb/tables/
 TPP:=./tpp_mayu/
 
+```
+```{r mk_intPathDir, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+
+```{bash mk_intPaths, engine='bash', echo=TRUE, eval=FALSE}
 
 # Apex paths:
 apexPaths:=$(addprefix ${apexDir},$(notdir $(rawFiles_All:.raw/_HEADER.TXT=_Apex3D.bin)))
@@ -249,6 +552,14 @@ mayuOut:= ./tpp_mayu/mayuOut_all_halo_psm_protFDR0.05_t_1.07.csv \
 					./tpp_mayu/mayuOut_all_halo_plot_psm_protFDR0.04_t_1.07.csv \
 					./tpp_mayu/mayuOut_all_halo_plot_main_1.07.csv
 
+```
+```{r mk_intPaths, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+The spectral libraries output in various formats defined here:
+
+```{bash mk_libraries, engine='bash', echo=TRUE, eval=FALSE}
 
 nonConsLib:=./tpp_mayu/ecoli_all.splib ./tpp_mayu/halo_all.splib
 
@@ -262,6 +573,18 @@ targetSplib:= ${nonConsLib} ${ConsLib} ${TsvLib_pk} ${TsvLib_os}
 
 uploadSplib:= ${nonConsLib} $(nonConsLib:.splib=.sptxt) ${TsvLib_pk} ${TsvLib_os}
 
+```
+```{r mk_libraries, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+## Fasta Files
+
+The `.fasta` protein database files are specified here.
+
+Also specified are a pair of `.fasta` databases of common contaminants to draw-off likely contaminating spectra and a file containing a the peptides set as retention-time and quantitative standards concatenated into a single pseudo-protein. 
+
+```{bash mk_fastaPaths, engine='bash', echo=TRUE, eval=FALSE}
 
 # organism fasta files
 fasta_ecoli=D:/fasta/Ecoli_MG1655_UP000000625.fasta
@@ -294,6 +617,23 @@ RTindex=./ini/iRTPeptides_huge.txt
 # List of fasta files to be included in the data submission
 uploadFasta:= ${fastaForTandem} ${fastaForSearchEcoli} ${fastaForSearchHalo} ${fasta_halo} ${fasta_ecoli}
 
+```
+```{r mk_fastaPaths, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+The specified `.fasta` files are combined so that:
+
+-  The two contaminant databases are combined and given a common `cont_` prefix to protein names.
+-  The contaminant and iRT databases are combined with the strain specific database for halomonas C3001.
+-  All annotation apart from accession number is stripped from the sequence annotation.
+
+The `.fasta` files are also converted to a table format for easy import and use in R.
+
+## Spesify Upload Packet
+
+This section specifies the files which are to be uploaded to Pride and copies them to a specific folder for upload.
+
+```{bash mk_uploadDir, engine='bash', echo=TRUE, eval=FALSE}
 
 uploadDir:=D:/HaloLibForUpload/
 
@@ -318,6 +658,24 @@ uploadTargets := ${uploadFileList} ${upload_mzid} ${uploadRaw}
 
 
 
+```
+```{r mk_uploadDir, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+
+## Spesify Targets
+
+A critical part of a `makefile` is specification of the targets.
+Providing recipes exists to build intermediate and final target files from input files all these targets will be produced.
+The targets specified in `all` will be built.
+This is assured by making the special variable `.PHONY` dependent on `all` because all pre-requisites of `.PHONY` must always be rebuilt.
+The target `.PHONY` is the first target defined in the file and an invocation of make on the makefile will built that target if no other target is given on the comand line.
+Other targets may be spesified on the gnu-make invoking comand line, the targets `buildSet` for example `buildApex` are provided for trouble shooting to enable each step of the process to be built in turn.
+The special target `.ONESHELL` is also set here to specify that all lines in a recipe be run in the same shell invocation rather than each in a separate invocation.
+Running in a single shell is important for a few recipes where variables are set in one line and used in subsequent lines in the recipe.
+
+```{bash mk_make_special, engine='bash', echo=TRUE, eval=FALSE}
 
 allTargets:= $(sort ${apexPaths}) ${pep3dPaths} ${iadb_all} ${targetSplib} ${mayuOut} 
 allUpload:= ${uploadTargets} ${rawFiles_All_zip}
@@ -361,6 +719,15 @@ testBuild_mzXML:${mzXMLTestFile}
 testBuildTandem:${tandemTestFile}
 
 
+```
+```{r mk_make_special, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+## Recipies
+
+### Generate Fasta Files
+
+```{bash mk_makeFasta, engine='bash', echo=TRUE, eval=FALSE}
 
 decoy_string=reverse_
 cont_string=cont_
@@ -429,6 +796,22 @@ ${fastaForSearchEcoli_xtand_decoy} : ${fastaForSearchEcoli_xtand}
 	${DecoyDatabase_path} -in $^ -out $@ -decoy_string ${decoy_string} 
 
 
+```
+```{r mk_makeFasta, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+### Set Apex, Peptide3d and Mayu Variables
+
+It is possible to use `makefile` variables to set the values of switches on executables.
+For full executables for Apex and Peptide3d see [Apex Feature Picking] and [Peptide3d Spectra Generation].
+However during pipeline refinement the following parameters to which the process is quite sensitive were taken out to this section for ease of adjustment.
+
+#### Apex Settings
+
+The Apex3d program has many settings which are set below:
+
+```{bash mk_apexSettings_wcl, engine='bash', echo=TRUE, eval=FALSE}
 
 # Whole cell lysate APEX settings
 
@@ -451,6 +834,11 @@ noFilteredIons_wcl:=1
 bEnableTempCal_wcl:=1
 
 
+```
+```{r mk_apexSettings_wcl, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+```{bash mk_apexSettings_peri, engine='bash', echo=TRUE, eval=FALSE}
 
 # Periplasm apex settings
 
@@ -473,6 +861,11 @@ noFilteredIons_peri:=1
 bEnableTempCal_peri:=1
 
 
+```
+```{r mk_apexSettings_peri, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+```{bash mk_apexSettings_sec, engine='bash', echo=TRUE, eval=FALSE}
 
 # Apex - from HaloSpecLib
 
@@ -495,12 +888,43 @@ noFilteredIons_sec:=1
 bEnableTempCal_sec:=1
 
 
+```
+```{r mk_apexSettings_sec, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+
+#### Peptide3D Settings
+
+As with Apex3d Peptide3d has a many settings. A few of these were adjusted during pipeline development and are set here:
+
+```{bash mk_pep3d, engine='bash', echo=TRUE, eval=FALSE}
 
 minHEIntenThreshold:=10
 minLEIntenThreshold:=25
 msResolution:=20000
 disableSingleHE:=0
 
+```
+```{r mk_pep3d, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+### Peak Picking
+
+The Apex3d and peptide3d algorithms between them work to pick peaks from the raw data, de-isotope them, relate precursor and product ions and produce spectra peaklists for database searching.
+I am not entirely clear how the tasks are split.
+I think Apex does the initial peak picking and feature detection and peptide3d associates precursor and product ions and determines peptide mass from multiply charged precursors and outputs a de-isotope peak list.
+I need to find some documentation to properly understand this.
+
+#### Apex Feature Picking
+
+The Apex algorithm is run with settings closely mirroring those run by PLGS.
+The major difference is substantial effort put into optimising the low-energy and high-energy thresholds that appear critical in getting high numbers of peptides hits.
+
+For whole cell lysate:
+
+```{bash mk_apexRun_wcl, engine='bash', echo=TRUE, eval=FALSE}
 
 
 define rawApex_rule
@@ -546,6 +970,14 @@ $(foreach rawFile, ${rawFiles_All_wcl},$(eval $(call rawApex_rule,\
 $(addprefix ${apexDir},$(notdir $(rawFile:.raw/_HEADER.TXT=_Apex3D.bin))),\
 $(rawFile:.raw/_HEADER.TXT=.raw))))
 
+```
+```{r mk_apexRun_wcl, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+For periplasm:
+
+
+```{bash mk_apexRun_peri, engine='bash', echo=TRUE, eval=FALSE}
 
 define rawApex_rule
 ${1} : ${2}
@@ -590,6 +1022,14 @@ $(foreach rawFile, ${rawFiles_All_peri},$(eval $(call rawApex_rule,\
 $(addprefix ${apexDir},$(notdir $(rawFile:.raw/_HEADER.TXT=_Apex3D.bin))),\
 $(rawFile:.raw/_HEADER.TXT=.raw))))
 
+```
+```{r mk_apexRun_peri, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+For secretome:
+
+```{bash mk_apexRun_sec, engine='bash', echo=TRUE, eval=FALSE}
 
 
 define rawApex_rule
@@ -634,6 +1074,27 @@ $(foreach rawFile, ${rawFiles_All_sec},$(eval $(call rawApex_rule,\
 $(addprefix ${apexDir},$(notdir $(rawFile:.raw/_HEADER.TXT=_Apex3D.bin))),\
 $(rawFile:.raw/_HEADER.TXT=.raw))))
 
+```
+```{r mk_apexRun_sec, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+#### Peptide3d Spectra Generation 
+
+The peptide3d algorithm is run with as close as possible to the PLGS defaults.
+Some changes have been made.
+There was an issue with peptide3d "hanging" with some files.
+The process would consume all the RAM and never complete.
+Documentation on this from Waters suggested altering some settings as noted in the code below.
+
+The recipe uses the pipe `|` as part of its dependency instruction.
+All dependencies after this symbol are ["order-only"](https://www.gnu.org/software/make/manual/html_node/Prerequisite-Types.html) dependencies.
+This means they will not force re-running of a recipe if they themselves are updated, however if they are to be updated in this run they must be rebuild prior to the current target.
+The feature is used here to ensure each pep3d file in the complete list of pep3d files has all subsequent pep3d files in the list as order only dependencies.
+The result is that only a single pep3d file may be produced at a time to prevent this particular operation overwhelming available RAM and crashing the process.
+
+
+```{bash mk_pep3dRun, engine='bash', echo=TRUE, eval=FALSE}
 
 
 define pep3d_rule
@@ -676,6 +1137,16 @@ $(subst apex,pep3d,$(apexPaths:_Apex3D.bin=_Pep3DAMRT.mgf))))\
 )))
 
 
+```
+```{r mk_pep3dRun, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+#### Merge
+
+The fractionated whole cell lysate peak lists produced by peptide3d are merged prior to search and quantification by IADB.
+
+```{bash mk_mergePep3dIni_wcl, engine='bash', echo=TRUE, eval=FALSE}
 
 define pep3dFileFromRaw
     $(addprefix ./pep3d/,$(notdir $(1:.raw/_HEADER.TXT=_Pep3D_Spectrum.bin)))
@@ -699,6 +1170,22 @@ merge_ecoli_wcl.ini : $(call pep3dFileFromRaw,${rawFilesEcoliWCLPaths})
 												-outputUserDirName ".\pep3d\merge_ecoli_wcl" \
 												-WriteXML 0 \
 												-outputFile $(call winify, $@)
+```
+```{r mk_mergePep3dIni_wcl, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+
+### IADB Search Whole Cell Lysate Merged Files
+
+The search is run through the Waters search system `iadb.exe`.
+The program requires an input of spectra from a Waters `.bin` file;
+a `.fasta` database to search;
+and a `.xml` file specifying the search parameters.
+The latter was exported from the PLGS gui and edited below.
+
+
+```{bash mk_searchSets, engine='bash', echo=TRUE, eval=FALSE}
 define searchSets
 <?xml version="1.0" encoding="UTF-8"?>
 <WORKFLOW_TEMPLATE TITLE="FBRH_BacteriaSearch" UUID="${UUID}" WORKFLOW_TEMPLATE_ID="_15731280752780_5292366780985168">
@@ -751,6 +1238,16 @@ endef
 params.xml : #.FORCE
 	$(file > params.xml,${searchSets})
 
+```
+```{r mk_searchSets, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+The search execution is set up below.
+A rule is created to search every given `pep3d` file and output a matching search result.
+
+
+```{bash mk_search, engine='bash', echo=TRUE, eval=FALSE}
 
 define IadbFromPep3d
 $(abspath $(addprefix ${iadbDir},$(notdir $(1:_Pep3D_Spectrum.bin=_IA_workflow.bin))))
@@ -812,6 +1309,24 @@ $(eval $(call search_rule,\
 ./pep3d/merged_halo_all_Pep3D_Spectrum.bin,$\
 ${fastaForSearchHalo_decoy}))
 
+```
+```{r mk_search, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+
+
+### TPP Pipeline for Spectral Library
+
+The trans-proteomic pipeline is used to process `.mgf` files produced by peptide3d above into a spectral library.
+The results of the TPP are cross referenced with the iadb search to yield a high quality list of quantified proteins.
+
+#### X!Tandem Search
+
+The first step is to convert `.mgf` files into mzXML files which can be searched by X!tandem:
+
+
+```{r mk_convertpep3dTo_pepXML, engine='bash', echo=TRUE, eval=FALSE}
 
 
 define mzXML_Rule
@@ -829,6 +1344,18 @@ $(foreach mzXMLfile, ${all_mzXML},\
 ))
 
 
+```
+```{r mk_convertpep3dTo_pepXML, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE) }
+```
+
+Each of the resulting `.mzXML` files is then searched with x!tandem as below.
+The process is a little complex.
+For each mzxml file a copy is made of the standard xtandem paramater file.
+This copy is then edited with required spectrum file, target file name and fasta search file.
+After the search is complete, which outputs a tandem xml and an mzid file, the paramater file is deleted.
+
+
+```{r mk_make_xtandem, engine='bash', echo=TRUE, eval=FALSE}
 
 
 define Xtandem_Rule
@@ -864,6 +1391,13 @@ $(foreach specFile, ${pep3dHaloPaths_mzXML},\
 
 
 
+```
+```{r mk_make_xtandem, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+The `.t.xml` files are then converted into `.pepXML` files to be processed by the rest of the TPP:
+
+```{r mk_make_tandem2xml, engine='bash', echo=TRUE, eval=FALSE}
 
 define Xtandem_pep_xml_Rule
 ${1}: ${2}
@@ -889,6 +1423,17 @@ $(foreach pepXML, ${pep3dHaloPaths_pepXML},\
 	)\
 )
 
+```
+```{r mk_make_tandem2xml, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+#### Interact and peptide prophet
+
+The `pepXML` files are then combined into single pepXML files using TPP `xinteract`:
+
+
+```{r mk_make_xinteract, engine='bash', echo=TRUE, eval=FALSE}
 
 define xinteract_Rule
 ${1} : ${2}
@@ -924,6 +1469,13 @@ $(eval \
 
 
 
+```
+```{r mk_make_xinteract, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+The scores for the peptides are then adjusted using peptide prophet:
+
+```{r mk_make_peptideProphet, engine='bash', echo=TRUE, eval=FALSE}
 
 define peptideProphet_Rule
 ${1} : ${2}
@@ -954,6 +1506,20 @@ $(eval \
 
 
 
+```
+```{r mk_make_peptideProphet, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+#### Mayu FDR Estimation
+
+Mayu is a tool that estimates peptide and protein false discovery rates.
+Mayu is actually run twice here.
+One time with settings defined in `mayu_Rule` to find the correct score to set for spectra import into spectrast.
+The second time with settings defined in `mayu_Rule_plot` making calculations to higher FDR to produce data for figures presented in the paper.
+
+
+```{r mk_mayu_prophet, engine='bash', echo=TRUE, eval=FALSE}
 
 
 define mayu_Rule
@@ -1027,6 +1593,17 @@ $(eval \
 
 
 
+```
+```{r mk_mayu_prophet, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+#### Spectrast and Spectral Library Generation
+
+The integrated search results are now converted into a spectral library with spectrast.
+This takes `pepXML` files generated above, filters them to control FDR against the mayu result files and applies an iRT index.
+
+```{r mk_tpp_spectrast, engine='bash', echo=TRUE, eval=FALSE}
 
 define spectrast_Rule	
 ${1} $(1:.splib=.sptxt) &: ${2} ${3} ${4}
@@ -1093,6 +1670,13 @@ $(eval $(call spectrastCons_Rule,./tpp_mayu/halo_all_cons.splib,./tpp_mayu/halo_
 
 
 
+```
+```{r mk_tpp_spectrast, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+The spectral libraries produced by spectrast are now converted into `.tsv` format for ease of use with other DIA tools such as openSWATH and peakview.
+
+```{r mk_tpp_spectrast2tsvOS, engine='bash', echo=TRUE, eval=FALSE}
 
 define spectrast2tsv_Rule
 ${1} : ${2}
@@ -1120,6 +1704,11 @@ $(foreach splib2conv, ${ConsLib},\
 			)\
 )
 
+```
+```{r mk_tpp_spectrast2tsvOS, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+```{r mk_tpp_spectrast2tsvPK, engine='bash', echo=TRUE, eval=FALSE}
 
 define spectrast2tsv_Rule
 ${1} : ${2}
@@ -1147,6 +1736,15 @@ $(foreach splib2conv, ${ConsLib},\
 			)\
 )
 
+```
+```{r mk_tpp_spectrast2tsvPK, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+# Create Upload Package
+
+Copy raw data from the various data directories to the upload
+
+```{r mk_uploadRawData, engine='bash', echo=TRUE, eval=FALSE}
 
 
 define zip7raw
@@ -1173,6 +1771,12 @@ $(foreach raw, ${rawFiles_All},\
 
 
 
+```
+```{r mk_uploadRawData, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+```{r mk_copyMZID, engine='bash', echo=TRUE, eval=FALSE}
 
 define copyToUpload_MZID
 ${1} : ${2}
@@ -1190,6 +1794,12 @@ $(foreach file, ${all_mzid},\
 			)\
 )
 
+```
+```{r mk_copyMZID, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
+
+
+```{r mk_copyIntermediatUpload, engine='bash', echo=TRUE, eval=FALSE}
 
 
 define copyToUpload
@@ -1207,3 +1817,6 @@ $(foreach file, ${intermediateFilesForUpload},\
 )
 
 
+```
+```{r mk_copyIntermediatUpload, engine='cat', engine.opts=list(file='./integrated.mk',append=TRUE)}
+```
